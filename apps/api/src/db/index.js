@@ -19,6 +19,11 @@ export const pool = new Pool({
   connectionTimeoutMillis: 30000
 });
 
+// Prevent unhandled error event crash on idle socket resets (essential for cloud serverless Postgres)
+pool.on('error', (err) => {
+  console.warn('[pg-pool] Network/idle connection reset:', err.message);
+});
+
 export async function query(text, params) {
   return pool.query(text, params);
 }

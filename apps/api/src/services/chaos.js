@@ -93,28 +93,32 @@ export async function runAbandonedReservationsScenario({ autoReset = true } = {}
   }
 
   const startTime = Date.now();
-  console.log('[scenario-s2] Creating 5 abandoned reservations with 3s TTL...');
+  console.log('[scenario-s2] Creating 5 abandoned reservations with 10s TTL concurrently...');
 
-  const orders = [];
+  // Create 5 concurrent orders
+  const orderPromises = [];
   for (let i = 1; i <= 5; i++) {
-    const order = await createOrder({
-      items: [{ storeId: 'store-a', sku: 'sku-flash', qty: 1 }],
-      customerName: `Abandoned Cart #${i}`,
-      ttlSeconds: 3 // Short TTL
-    });
-    orders.push(order);
+    orderPromises.push(
+      createOrder({
+        items: [{ storeId: 'store-a', sku: 'sku-flash', qty: 1 }],
+        customerName: `Abandoned Cart #${i}`,
+        ttlSeconds: 10 // 10s TTL per PRD S2 spec
+      })
+    );
   }
 
-  // Verify stock reserved
+  const orders = await Promise.all(orderPromises);
+
+  // Verify stock was successfully reserved (5 units)
   const midRes = await query(`SELECT reserved FROM inventory WHERE store_id = 'store-a' AND sku = 'sku-flash'`);
   const midReserved = midRes.rows[0].reserved;
 
-  // Wait 4 seconds for TTL expiration
-  await new Promise(r => setTimeout(r, 4000));
+  // Wait 11 seconds for TTL to elapse and background sweeper to release
+  console.log('[scenario-s2] Waiting 11s for reservation expiry & sweeper...');
+  await new Promise(r => setTimeout(r, 11000));
 
-  // Run sweeper to release expired reservations
+  // Run sweeper in case any item is pending release
   const releasedCount = await sweepExpiredReservations();
-  console.log(`[scenario-s2] Sweeper released ${releasedCount} expired reservation items`);
 
   // Verify final inventory
   const finalRes = await query(`SELECT on_hand, reserved FROM inventory WHERE store_id = 'store-a' AND sku = 'sku-flash'`);
@@ -131,7 +135,7 @@ export async function runAbandonedReservationsScenario({ autoReset = true } = {}
   return {
     scenarioId: 'S2',
     name: 'Abandoned Reservations (TTL Expiry & Sweeper)',
-    description: '5 reservations created with 3s TTL. No payment is made. Sweeper detects expiry, marks items EXPIRED, cancels orders, and fully restores reserved stock.',
+    description: '5 reservations created with 10s TTL. Nobody pays. Sweeper detects expiry, cancels orders, and fully restores reserved stock.',
     durationMs: Date.now() - startTime,
     passed,
     expected: {
