@@ -238,3 +238,339 @@ export async function getAllOrders(limit = 50) {
   );
   return res.rows;
 }
+
+export async function acceptSubOrder(subOrderId, actor = 'store') {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query('SELECT * FROM sub_orders WHERE id = $1 FOR UPDATE', [subOrderId]);
+    if (res.rowCount === 0) throw Object.assign(new Error('Sub-order not found'), { status: 404 });
+    const sub = res.rows[0];
+
+    if (sub.fulfilment_state !== 'PENDING') {
+      throw Object.assign(new Error(`Cannot accept sub-order in fulfilment state ${sub.fulfilment_state}`), { status: 409 });
+    }
+
+    await client.query(
+      `UPDATE sub_orders SET fulfilment_state = 'ACCEPTED', version = version + 1 WHERE id = $1`,
+      [subOrderId]
+    );
+
+    await client.query(
+      `INSERT INTO order_events (order_id, sub_order_id, actor, event_type, from_state, to_state, message)
+       VALUES ($1, $2, $3, 'SUB_ORDER_ACCEPTED', 'PENDING', 'ACCEPTED', 'Sub-order accepted by store ' || $4)`,
+      [sub.order_id, subOrderId, actor, sub.store_id]
+    );
+
+    await client.query('COMMIT');
+    return await getOrderById(sub.order_id);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function dispatchSubOrder(subOrderId, actor = 'store') {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query('SELECT * FROM sub_orders WHERE id = $1 FOR UPDATE', [subOrderId]);
+    if (res.rowCount === 0) throw Object.assign(new Error('Sub-order not found'), { status: 404 });
+    const sub = res.rows[0];
+
+    if (sub.payment_state !== 'PAID') {
+      throw Object.assign(new Error(`Cannot dispatch unpaid sub-order (current payment state: ${sub.payment_state})`), { status: 409 });
+    }
+    if (sub.fulfilment_state !== 'ACCEPTED') {
+      throw Object.assign(new Error(`Cannot dispatch sub-order not yet accepted (current fulfilment state: ${sub.fulfilment_state})`), { status: 409 });
+    }
+
+    // In one transaction: on_hand -= qty, reserved -= qty, reservation_status = 'FULFILLED'
+    const itemsRes = await client.query('SELECT * FROM sub_order_items WHERE sub_order_id = $1', [subOrderId]);
+    for (const item of itemsRes.rows) {
+      await client.query(
+        `UPDATE inventory
+         SET on_hand = on_hand - $1, reserved = reserved - $1
+         WHERE store_id = $2 AND sku = $3`,
+        [item.qty, sub.store_id, item.sku]
+      );
+
+      await client.query(
+        `UPDATE sub_order_items SET reservation_status = 'FULFILLED' WHERE id = $1`,
+        [item.id]
+      );
+    }
+
+    await client.query(
+      `UPDATE sub_orders SET fulfilment_state = 'DISPATCHED', version = version + 1 WHERE id = $1`,
+      [subOrderId]
+    );
+
+    await client.query(
+      `INSERT INTO order_events (order_id, sub_order_id, actor, event_type, from_state, to_state, message)
+       VALUES ($1, $2, $3, 'SUB_ORDER_DISPATCHED', 'ACCEPTED', 'DISPATCHED', 'Sub-order dispatched. Inventory fulfilled.')`,
+      [sub.order_id, subOrderId, actor]
+    );
+
+    await client.query('COMMIT');
+    return await getOrderById(sub.order_id);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deliverSubOrder(subOrderId, actor = 'store') {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query('SELECT * FROM sub_orders WHERE id = $1 FOR UPDATE', [subOrderId]);
+    if (res.rowCount === 0) throw Object.assign(new Error('Sub-order not found'), { status: 404 });
+    const sub = res.rows[0];
+
+    if (sub.fulfilment_state !== 'DISPATCHED') {
+      throw Object.assign(new Error(`Cannot deliver sub-order in state ${sub.fulfilment_state}`), { status: 409 });
+    }
+
+    await client.query(
+      `UPDATE sub_orders SET fulfilment_state = 'DELIVERED', version = version + 1 WHERE id = $1`,
+      [subOrderId]
+    );
+
+    await client.query(
+      `INSERT INTO order_events (order_id, sub_order_id, actor, event_type, from_state, to_state, message)
+       VALUES ($1, $2, $3, 'SUB_ORDER_DELIVERED', 'DISPATCHED', 'DELIVERED', 'Sub-order delivered to customer.')`,
+      [sub.order_id, subOrderId, actor]
+    );
+
+    // Check if entire master order is now completed
+    const allSubs = await client.query('SELECT fulfilment_state FROM sub_orders WHERE order_id = $1', [sub.order_id]);
+    const allDone = allSubs.rows.every(s => ['DELIVERED', 'CANCELLED'].includes(s.fulfilment_state));
+    if (allDone) {
+      await client.query(`UPDATE orders SET status = 'COMPLETED' WHERE id = $1`, [sub.order_id]);
+    }
+
+    await client.query('COMMIT');
+    return await getOrderById(sub.order_id);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function cancelSubOrder(subOrderId, actor = 'customer', reason = 'Customer requested cancellation') {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query('SELECT * FROM sub_orders WHERE id = $1 FOR UPDATE', [subOrderId]);
+    if (res.rowCount === 0) throw Object.assign(new Error('Sub-order not found'), { status: 404 });
+    const sub = res.rows[0];
+
+    if (['DISPATCHED', 'DELIVERED', 'CANCELLED'].includes(sub.fulfilment_state)) {
+      throw Object.assign(new Error(`Cannot cancel sub-order in state ${sub.fulfilment_state}`), { status: 409 });
+    }
+
+    // Release unfulfilled reservations
+    const itemsRes = await client.query(
+      `SELECT * FROM sub_order_items WHERE sub_order_id = $1 AND reservation_status IN ('ACTIVE', 'COMMITTED')`,
+      [subOrderId]
+    );
+
+    for (const item of itemsRes.rows) {
+      await client.query(
+        `UPDATE inventory SET reserved = reserved - $1 WHERE store_id = $2 AND sku = $3`,
+        [item.qty, sub.store_id, item.sku]
+      );
+      await client.query(
+        `UPDATE sub_order_items SET reservation_status = 'RELEASED' WHERE id = $1`,
+        [item.id]
+      );
+    }
+
+    let nextPaymentState = sub.payment_state;
+    // If paid, create refund request
+    if (sub.payment_state === 'PAID') {
+      nextPaymentState = 'REFUND_PENDING';
+      const refundId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO refund_requests (id, sub_order_id, amount_paise, status, reason, idempotency_key)
+         VALUES ($1, $2, $3, 'REQUESTED', $4, $5)
+         ON CONFLICT (sub_order_id) DO NOTHING`,
+        [refundId, subOrderId, sub.total_paise, reason, `refund:${subOrderId}`]
+      );
+    }
+
+    await client.query(
+      `UPDATE sub_orders
+       SET fulfilment_state = 'CANCELLED', payment_state = $1, version = version + 1
+       WHERE id = $2`,
+      [nextPaymentState, subOrderId]
+    );
+
+    await client.query(
+      `INSERT INTO order_events (order_id, sub_order_id, actor, event_type, from_state, to_state, message, details)
+       VALUES ($1, $2, $3, 'SUB_ORDER_CANCELLED', $4, 'CANCELLED', $5, $6)`,
+      [
+        sub.order_id,
+        subOrderId,
+        actor,
+        sub.fulfilment_state,
+        `Sub-order for ${sub.store_id} cancelled. ${sub.payment_state === 'PAID' ? 'Refund initiated.' : 'Reservations released.'}`,
+        JSON.stringify({ reason })
+      ]
+    );
+
+    // Update master order status
+    const allSubs = await client.query('SELECT fulfilment_state FROM sub_orders WHERE order_id = $1', [sub.order_id]);
+    const anyActive = allSubs.rows.some(s => ['PENDING', 'ACCEPTED', 'DISPATCHED', 'DELIVERED'].includes(s.fulfilment_state));
+    if (!anyActive) {
+      await client.query(`UPDATE orders SET status = 'CANCELLED' WHERE id = $1`, [sub.order_id]);
+    } else {
+      await client.query(`UPDATE orders SET status = 'PARTIALLY_CANCELLED' WHERE id = $1`, [sub.order_id]);
+    }
+
+    await client.query('COMMIT');
+    return await getOrderById(sub.order_id);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function cancelOrder(orderId, actor = 'customer', reason = 'Customer cancelled entire order') {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const orderRes = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+    if (orderRes.rowCount === 0) throw Object.assign(new Error('Order not found'), { status: 404 });
+    const order = orderRes.rows[0];
+
+    const subOrdersRes = await client.query('SELECT id, fulfilment_state FROM sub_orders WHERE order_id = $1', [orderId]);
+    for (const sub of subOrdersRes.rows) {
+      if (!['DISPATCHED', 'DELIVERED', 'CANCELLED'].includes(sub.fulfilment_state)) {
+        await cancelSubOrder(sub.id, actor, reason);
+      }
+    }
+
+    await client.query('COMMIT');
+    return await getOrderById(orderId);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function handleStoreFailure(storeId) {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+
+    // Update store status to DOWN
+    await client.query(`UPDATE stores SET status = 'DOWN', updated_at = NOW() WHERE id = $1`, [storeId]);
+
+    // Fetch active sub-orders for this store in PENDING or ACCEPTED
+    const subsRes = await client.query(
+      `SELECT s.*, o.status as order_status
+       FROM sub_orders s
+       JOIN orders o ON s.order_id = o.id
+       WHERE s.store_id = $1 AND s.fulfilment_state IN ('PENDING', 'ACCEPTED')
+       FOR UPDATE OF s`,
+      [storeId]
+    );
+
+    console.log(`[store-failure] Store ${storeId} went DOWN. Processing ${subsRes.rowCount} active sub-orders.`);
+
+    for (const sub of subsRes.rows) {
+      if (sub.payment_state === 'PAID') {
+        // PAID sub-order: cancel and refund ONLY that store's part! Completed/other store sub-orders continue normally!
+        // Release reservations for this store
+        const items = await client.query(
+          `SELECT * FROM sub_order_items WHERE sub_order_id = $1 AND reservation_status IN ('ACTIVE', 'COMMITTED')`,
+          [sub.id]
+        );
+        for (const item of items.rows) {
+          await client.query(
+            `UPDATE inventory SET reserved = reserved - $1 WHERE store_id = $2 AND sku = $3`,
+            [item.qty, storeId, item.sku]
+          );
+          await client.query(
+            `UPDATE sub_order_items SET reservation_status = 'RELEASED' WHERE id = $1`,
+            [item.id]
+          );
+        }
+
+        // Create refund request for this sub-order
+        const refundReqId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO refund_requests (id, sub_order_id, amount_paise, status, reason, idempotency_key)
+           VALUES ($1, $2, $3, 'REQUESTED', 'Store outage automatic partial refund', $4)
+           ON CONFLICT (sub_order_id) DO NOTHING`,
+          [refundReqId, sub.id, sub.total_paise, `refund:${sub.id}`]
+        );
+
+        await client.query(
+          `UPDATE sub_orders
+           SET fulfilment_state = 'CANCELLED', payment_state = 'REFUND_PENDING', version = version + 1
+           WHERE id = $1`,
+          [sub.id]
+        );
+
+        await client.query(
+          `INSERT INTO order_events
+           (order_id, sub_order_id, actor, event_type, from_state, to_state, message, details)
+           VALUES ($1, $2, 'chaos', 'STORE_OUTAGE_PARTIAL_CANCEL', $3, 'CANCELLED',
+                   'Store ' || $4 || ' went offline. Sub-order cancelled and refund initiated. Completed fulfilment on other stores preserved.', $5)`,
+          [sub.order_id, sub.id, sub.fulfilment_state, storeId, JSON.stringify({ storeId })]
+        );
+      } else {
+        // UNPAID sub-order: cancel the whole order and release every reservation
+        const allItems = await client.query(
+          `SELECT i.*, s.store_id
+           FROM sub_order_items i
+           JOIN sub_orders s ON i.sub_order_id = s.id
+           WHERE s.order_id = $1 AND i.reservation_status = 'ACTIVE'`,
+          [sub.order_id]
+        );
+        for (const item of allItems.rows) {
+          await client.query(
+            `UPDATE inventory SET reserved = reserved - $1 WHERE store_id = $2 AND sku = $3`,
+            [item.qty, item.store_id, item.sku]
+          );
+          await client.query(
+            `UPDATE sub_order_items SET reservation_status = 'RELEASED' WHERE id = $1`,
+            [item.id]
+          );
+        }
+
+        await client.query(`UPDATE orders SET status = 'CANCELLED' WHERE id = $1`, [sub.order_id]);
+        await client.query(`UPDATE sub_orders SET fulfilment_state = 'CANCELLED' WHERE order_id = $1`, [sub.order_id]);
+
+        await client.query(
+          `INSERT INTO order_events
+           (order_id, actor, event_type, from_state, to_state, message)
+           VALUES ($1, 'chaos', 'ORDER_CANCELLED_STORE_OUTAGE', 'PENDING_PAYMENT', 'CANCELLED',
+                   'Unpaid order cancelled due to store ' || $2 || ' outage')`,
+          [sub.order_id, storeId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
