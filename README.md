@@ -3,9 +3,12 @@
 > **Your wealth. One intelligent view.**  
 > AI Assistant: **Gemini Wealth Copilot**
 
-[![Tech Stack](https://img.shields.io/badge/Stack-React%2019%20%7C%20Node.js%20%7C%20Tailwind%20%7C%20Gemini-6366f1)](#tech-stack)
-[![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%203.5%20%2F%203.8%20Flash-06b6d4)](#gemini-wealth-copilot)
-[![Live News](https://img.shields.io/badge/Live%20News-Real--Time%20Sensitivity%20Engine-10b981)](#real-time-live-news--market-sensitivity)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-wealth--iq--umber.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://wealth-iq-umber.vercel.app/)
+[![Tech Stack](https://img.shields.io/badge/Stack-React%2019%20%7C%20Node.js%20%7C%20Tailwind%20%7C%20Gemini-6366f1?style=for-the-badge)](#tech-stack)
+[![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%203.5%20%2F%203.8%20Flash-06b6d4?style=for-the-badge)](#gemini-wealth-copilot)
+
+🔗 **Live Production URL:** [https://wealth-iq-umber.vercel.app/](https://wealth-iq-umber.vercel.app/)  
+📄 **Architecture & Judge Defense Handbook:** [WEALTHIQ_Architecture_Judge_Handbook.pdf](./WEALTHIQ_Architecture_Judge_Handbook.pdf)
 
 **WEALTHIQ** is a next-generation, evidence-based wealth intelligence platform that eliminates portfolio blind spots. While investors hold assets across direct stocks, mutual funds, gold, fixed deposits, insurance, real estate, and vehicles, they typically lack a single consolidated view. More critically, traditional tools fail to detect **hidden look-through overlap**: owning individual stocks (like Infosys) directly while simultaneously holding index and thematic mutual funds creates high, unmonitored concentration.
 
@@ -159,8 +162,10 @@ The server on `http://localhost:5000` automatically serves both the API endpoint
 
 ## ⏱️ 2-Minute Demo Flow
 
+> 🌐 **Try it Live right now:** [https://wealth-iq-umber.vercel.app/](https://wealth-iq-umber.vercel.app/)
+
 1. **Overview & Wealth Trajectory**:
-   * Open `http://localhost:5000`.
+   * Open [https://wealth-iq-umber.vercel.app/](https://wealth-iq-umber.vercel.app/) (or local `http://localhost:5000`).
    * Inspect the total net worth (₹65.80 Lakh) and the interactive **Wealth Trajectory Area Chart** (`3M`, `6M`, `1Y`).
    * Switch to **FAMILY PORTFOLIO** to view consolidated wealth (₹1.42 Cr) and toggle Father or Mother's **Consent Chip** to demo RBI Account Aggregator privacy gates.
 2. **Asset Explorer & Multifactor Filters**:
