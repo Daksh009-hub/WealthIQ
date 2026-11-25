@@ -18,11 +18,12 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// API routes
+// API routes - mounted at both /api and / for seamless local and Vercel serverless routing
 app.use('/api', apiRouter);
+app.use('/', apiRouter);
 
 // Basic server health check
-app.get('/api/ping', (req, res) => {
+app.get(['/api/ping', '/ping'], (req, res) => {
   res.json({
     status: 'ok',
     app: 'WealthIQ Server',

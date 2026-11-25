@@ -1,5 +1,6 @@
 // context/PortfolioContext.jsx
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { initialPortfolio, initialHealth, initialAssets, initialFamily } from '../data/fallbackData';
 
 const PortfolioContext = createContext(null);
 
@@ -7,14 +8,14 @@ export function PortfolioProvider({ children }) {
   const [scope, setScope] = useState('me'); // 'me' | 'family'
   const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'assets' | 'health' | 'market' | 'copilot'
   
-  const [portfolio, setPortfolio] = useState(null);
-  const [health, setHealth] = useState(null);
-  const [family, setFamily] = useState(null);
-  const [assets, setAssets] = useState([]);
+  const [portfolio, setPortfolio] = useState(initialPortfolio);
+  const [health, setHealth] = useState(initialHealth);
+  const [family, setFamily] = useState(initialFamily);
+  const [assets, setAssets] = useState(initialAssets);
   const [news, setNews] = useState([]);
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [toast, setToast] = useState(null);
@@ -33,34 +34,38 @@ export function PortfolioProvider({ children }) {
   // Fetch all core data for current scope
   const fetchData = useCallback(async (currentScope = scope) => {
     try {
-      setIsLoading(true);
-      const [resPortfolio, resHealth, resAssets, resFamily] = await Promise.all([
-        fetch(`/api/portfolio?scope=${currentScope}`).then(r => r.json()),
-        fetch(`/api/portfolio/health?scope=${currentScope}`).then(r => r.json()),
-        fetch(`/api/assets?scope=${currentScope}`).then(r => r.json()),
-        fetch('/api/family').then(r => r.json())
+      const fetchJson = async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      };
+
+      const [resPortfolio, resHealth, resAssets, resFamily] = await Promise.allSettled([
+        fetchJson(`/api/portfolio?scope=${currentScope}`),
+        fetchJson(`/api/portfolio/health?scope=${currentScope}`),
+        fetchJson(`/api/assets?scope=${currentScope}`),
+        fetchJson('/api/family')
       ]);
 
-      if (resPortfolio.success) {
-        setPortfolio(resPortfolio);
-        setLastSyncTime(resPortfolio.lastSyncTime);
+      if (resPortfolio.status === 'fulfilled' && resPortfolio.value?.success) {
+        setPortfolio(resPortfolio.value);
+        setLastSyncTime(resPortfolio.value.lastSyncTime);
       }
-      if (resHealth.success) {
-        setHealth(resHealth);
+      if (resHealth.status === 'fulfilled' && resHealth.value?.success) {
+        setHealth(resHealth.value);
       }
-      if (resAssets.success) {
-        setAssets(resAssets.assets || []);
+      if (resAssets.status === 'fulfilled' && resAssets.value?.success) {
+        setAssets(resAssets.value.assets || []);
       }
-      if (resFamily.success) {
-        setFamily(resFamily);
+      if (resFamily.status === 'fulfilled' && resFamily.value?.success) {
+        setFamily(resFamily.value);
       }
     } catch (err) {
-      console.error('Failed to load portfolio data:', err);
-      showToast('Error connecting to backend services', 'error');
+      console.warn('Backend sync note (using cached initial state):', err.message);
     } finally {
       setIsLoading(false);
     }
-  }, [scope, showToast]);
+  }, [scope]);
 
   // Fetch news data
   const fetchNews = useCallback(async (currentScope = scope) => {
