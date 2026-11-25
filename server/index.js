@@ -33,7 +33,10 @@ app.get('/api/ping', (req, res) => {
 });
 
 // Production client static serving
-const clientDistPath = path.resolve(__dirname, '../client/dist');
+const clientDistPath = fs.existsSync(path.resolve(__dirname, '../dist'))
+  ? path.resolve(__dirname, '../dist')
+  : path.resolve(__dirname, '../client/dist');
+
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
   app.get('*', (req, res) => {
@@ -43,10 +46,15 @@ if (fs.existsSync(clientDistPath)) {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`\n=================================================`);
-  console.log(`  WEALTHIQ Server running at http://localhost:${PORT}`);
-  console.log(`  AI Mode: ${process.env.GEMINI_API_KEY ? 'Gemini API Enabled' : 'Graceful Deterministic Fallback'}`);
-  console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`=================================================\n`);
-});
+// Only start background listening if not running on Vercel Serverless
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n=================================================`);
+    console.log(`  WEALTHIQ Server running at http://localhost:${PORT}`);
+    console.log(`  AI Mode: ${process.env.GEMINI_API_KEY ? 'Gemini API Enabled' : 'Graceful Deterministic Fallback'}`);
+    console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`=================================================\n`);
+  });
+}
+
+export default app;
