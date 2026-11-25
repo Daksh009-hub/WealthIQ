@@ -8,7 +8,6 @@
 [![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%203.5%20%2F%203.8%20Flash-06b6d4?style=for-the-badge)](#gemini-wealth-copilot)
 
 🔗 **Live Production URL:** [https://wealth-iq-umber.vercel.app/](https://wealth-iq-umber.vercel.app/)  
-📄 **Architecture & Judge Defense Handbook:** [WEALTHIQ_Architecture_Judge_Handbook.pdf](./WEALTHIQ_Architecture_Judge_Handbook.pdf)
 
 **WEALTHIQ** is a next-generation, evidence-based wealth intelligence platform that eliminates portfolio blind spots. While investors hold assets across direct stocks, mutual funds, gold, fixed deposits, insurance, real estate, and vehicles, they typically lack a single consolidated view. More critically, traditional tools fail to detect **hidden look-through overlap**: owning individual stocks (like Infosys) directly while simultaneously holding index and thematic mutual funds creates high, unmonitored concentration.
 
