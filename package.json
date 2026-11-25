@@ -4,13 +4,14 @@
   "description": "Your wealth. One intelligent view.",
   "type": "module",
   "scripts": {
+    "postinstall": "npm --prefix client install",
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,cyan\" \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
     "install:all": "npm install && npm --prefix server install && npm --prefix client install",
     "start": "node server/index.js",
-    "build": "npm --prefix client install && npm --prefix client run build",
-    "vercel-build": "npm --prefix client install && npm --prefix client run build"
+    "build": "npm --prefix client run build",
+    "vercel-build": "npm --prefix client run build"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
@@ -20,6 +21,10 @@
     "pdfkit": "^0.21.0"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "@tailwindcss/vite": "^4.3.5",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.3.5",
+    "vite": "^8.3.6"
   }
 }
